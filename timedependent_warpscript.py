@@ -69,6 +69,41 @@ def negvoltfunc(time, Vmax=7 * kV, frequency=1 * MHz):
 
 
 # ------------------------------------------------------------------------------
+#    Conductor Creation
+# Here two annuli are created with the let annulus being grounded and the right
+# annulus having an RF applied voltage. The geometries for the conductors are
+# defined here.
+# ------------------------------------------------------------------------------
+length = 0.75 * mm
+rmax = 2 * mm
+rmin = 0.5 * mm
+separation = 2 * mm
+gap_width = 2 * mm
+Vmax = 7 * kV
+Eavg = Vmax / gap_width
+plate_to_simbox_dist = 3. * mm
+zc = separation + length + gap_width / 2
+plate_zc = length / 2 + gap_width / 2
+
+# Create a time varying acceleration gap with 0.5*mm thickness centered at z=0.
+# Each gap is comprised of two plates. One gap will be to the left of the z=0
+# with two plates centered on -zc.
+l_leftplate = wp.Annulus(
+    rmin=rmin, rmax=rmax, length=length, zcent=-zc - plate_zc, voltage=0
+)
+l_rightplate = wp.Annulus(rmin=rmin, rmax=rmax, length=length, zcent=-zc + plate_zc)
+
+r_leftplate = wp.Annulus(rmin=rmin, rmax=rmax, length=length, zcent=zc - plate_zc)
+r_rightplate = wp.Annulus(
+    rmin=rmin, rmax=rmax, length=length, zcent=zc + plate_zc, voltage=0
+)
+# Invoke the time variation. This class can be found in the warp directory in
+# warp/scripts/utils. There are other settings that can be applied but this simply
+# makes it so that the conductor voltage is recalculated with wp.top.time using
+# the function provided.
+TimeVoltage(l_rightplate, voltfunc=voltfunc)
+TimeVoltage(r_leftplate, voltfunc=voltfunc)
+# ------------------------------------------------------------------------------
 #     Mesh set up
 # ------------------------------------------------------------------------------
 wp.w3d.xmmin = -3 * mm
@@ -79,12 +114,12 @@ wp.w3d.ymmin = -3 * mm
 wp.w3d.ymmax = 3 * mm
 wp.w3d.ny = 100
 
-wp.w3d.zmmin = -2 * mm
-wp.w3d.zmmax = 2 * mm
+wp.w3d.zmmin = -zc - 2. * plate_zc - plate_to_simbox_dist
+wp.w3d.zmmax = zc + 2. * plate_zc + plate_to_simbox_dist
 wp.w3d.nz = 200
 
 # Set boundary conditions
-wp.w3d.boundxy = wp.dirichlet
+wp.w3d.boundxy = wp.periodic
 wp.w3d.bound0 = wp.dirichlet
 wp.w3d.boundnz = wp.dirichlet
 
@@ -101,37 +136,17 @@ wp.top.dt = set_period / nsteps
 solver = wp.MRBlock3D()
 wp.registersolver(solver)
 
-# ------------------------------------------------------------------------------
-#    Conductor Creation
-# Here two annuli are created with the let annulus being grounded and the right
-# annulus having an RF applied voltage. The geometries for the conductors are
-# defined here.
-# ------------------------------------------------------------------------------
-zextent = 0.75 * mm
-rmax = 2 * mm
-rmin = 0.5 * mm
-separation = 1 * mm
-zc = separation / 2 + zextent / 2
-
-# Create a time varying acceleration gap with 0.5*mm thickness centered at z=0
-leftplate = wp.Annulus(rmin=rmin, rmax=rmax, length=zextent, zcent=-zc, voltage=0)
-rightplate = wp.Annulus(rmin=rmin, rmax=rmax, length=zextent, zcent=zc)
-
-# Invoke the time variation. This class can be found in the warp directory in
-# warp/scripts/utils. There are other settings that can be applied but this simply
-# makes it so that the conductor voltage is recalculated with wp.top.time using
-# the function provided.
-TimeVoltage(rightplate, voltfunc=voltfunc)
-
-wp.installconductors(leftplate)
-wp.installconductors(rightplate)
+wp.installconductors(l_leftplate)
+wp.installconductors(l_rightplate)
+wp.installconductors(r_leftplate)
+wp.installconductors(r_rightplate)
 wp.generate()
 
 # ------------------------------------------------------------------------------
 #    Visualization
 # The field is oscillated for nsteps and the potential at each step is collected.
 # During the while-loop the absolute max voltage is printed. After, the collected
-# potentials are plotted toegether to show the variation.  
+# potentials are plotted toegether to show the variation.
 # ------------------------------------------------------------------------------
 x = wp.w3d.xmesh
 y = wp.w3d.ymesh
@@ -140,18 +155,27 @@ z = wp.w3d.zmesh
 # Get index for x = 0, y = 0
 xc_ind = getindex(x, 0.0, wp.w3d.dx)
 yc_ind = xc_ind
+
+# Plot filled contours of potential
 wp.setup()
 wp.pfzx(fill=1, filled=1)
 wp.fma()
 
 phi0 = np.zeros(shape=(nsteps, len(z)))
 phi0[0, :] = wp.getphi()[xc_ind, yc_ind, :]
-fig, ax = plt.subplots()
-ax.axvline(x=(-zc - zextent / 2) / mm, c="k", ls="--")
-ax.axvline(x=(-zc + zextent / 2) / mm, c="k", ls="--")
-ax.axvline(x=(zc - zextent / 2) / mm, c="k", ls="--")
-ax.axvline(x=(zc + zextent / 2) / mm, c="k", ls="--")
-ax.plot(z / mm, phi0[0, :] / kV)
+Ez0 = wp.getselfe(comp="z")[xc_ind, yc_ind, :]
+fig, axes = plt.subplots(nrows=2, sharex=True)
+
+for ax in axes:
+    ax.axvline(x=(-zc - length / 2) / mm, c="k", ls="--")
+    ax.axvline(x=(-zc + length / 2) / mm, c="k", ls="--")
+    ax.axvline(x=(zc - length / 2) / mm, c="k", ls="--")
+    ax.axvline(x=(zc + length / 2) / mm, c="k", ls="--")
+
+axes[0].set_ylabel("On-axis Potential Normalized by Vmax")
+axes[1].set_ylabel("On-axis Ez Normalized by Eavg")
+axes[0].plot(z / mm, phi0[0, :] / Vmax)
+axes[1].plot(z / mm, Ez0 / Eavg)
 plt.show()
 
 while wp.top.it < nsteps - 1:
@@ -162,10 +186,10 @@ while wp.top.it < nsteps - 1:
     print(max(abs(this_phi0)) / kV)
 
 fig, ax = plt.subplots()
-ax.axvline(x=(-zc - zextent / 2) / mm, c="k", ls="--")
-ax.axvline(x=(-zc + zextent / 2) / mm, c="k", ls="--")
-ax.axvline(x=(zc - zextent / 2) / mm, c="k", ls="--")
-ax.axvline(x=(zc + zextent / 2) / mm, c="k", ls="--")
+ax.axvline(x=(-zc - length / 2) / mm, c="k", ls="--")
+ax.axvline(x=(-zc + length / 2) / mm, c="k", ls="--")
+ax.axvline(x=(zc - length / 2) / mm, c="k", ls="--")
+ax.axvline(x=(zc + length / 2) / mm, c="k", ls="--")
 for row in phi0:
     ax.plot(z / mm, row / kV)
 plt.show()
